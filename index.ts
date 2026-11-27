@@ -1,33 +1,6 @@
 import { OpenRouter } from '@openrouter/sdk'; 
 import { responseOutputTextFromJSON, toolCallFromJSON, type InputsUnion1, type OpenAIResponsesRefusalContent, type OpenResponsesResult, type OutputFunctionCallItem, type OutputMessageItem, type OutputReasoningItem, type ResponseOutputText, type ResponsesRequestToolFunction } from '@openrouter/sdk/models';
 
-/*
-  1. SETUP
-  Create the OpenRouter client 
-*/
-
-/*
-  2. FIRST REQUEST
-  Send the user's question plus the tools list to the model . It replies with a `function_call` item
-  asking us to run get_weather. We save its output into `inputs` (via
-  convertOutputItemToInput, which validates and converts output items into
-  valid input items) and throw if no tool call came back.
-*/
-
-/*
-  3. RUN THE TOOL
-  call each  toolcall 
-   check the name is `get_weather`, parse the JSON   `arguments` to get the city, run `weatherExecute(city)`, and append a
-  `function_call_output` to `inputs`. It is linked to the request by `callId`.
-*/
-
-/*
-  4. SECOND REQUEST
-  Resend the full history (user message + model's tool call + tool result),
-  since the API is stateless. Check that the status is `completed`, then find
-  the `message` item in the output and print its `output_text`. This is the
-  final answer.
-*/
 
 const weatherExecute = (city : string) => {
 
@@ -37,9 +10,10 @@ const weatherExecute = (city : string) => {
     case 'delhi':
       return `${city} : 28`
     default:
-      throw new Error(`Weather data not available for ${city}`);
+      return `${city} : 30` 
   }
 };
+
 
 
 const tools: ResponsesRequestToolFunction[] = [    
@@ -101,7 +75,7 @@ function isFunctionCallOrReasoningItem(
 
  
 const inputs: InputsUnion1[] = [{
-  content: "What is the weather in gurgaon and delhi",
+  content: "What is the weather in gurgaon and delhi and make weather calls sequentially",
   role: "user"
 }]
  
@@ -113,6 +87,9 @@ const client = new OpenRouter({
   apiKey: process.env.OPENROUTER_API_KEY,
 });
 
+
+while (true) {
+
 const response = await client.responses.send({
   responsesRequest: {
     model: process.env.OPENROUTER_MODEL,
@@ -123,58 +100,34 @@ const response = await client.responses.send({
   }
 );
 
+console.log("response by LLM : ", JSON.stringify(response.output, null, 2));
+const toolcalls = response.output.filter(x => x.type === "function_call")
 
+if (toolcalls.length === 0){
+    
+  if (!('output' in response)) {
+      throw new Error('Expected a non-streaming response');
+    }
+
+const finalMessage = [...response.output].reverse().find((item) => item.type === 'message');
+console.log(finalMessage?.content.find((part) => part.type === 'output_text')?.text);
+break;
+}
 
 inputs.push(...response.output.map((item) => convertOutputItemToInput(item)));
-
-const toolcalls = response.output.filter(x => x.type === "function_call")
-//console.log("toolcalls by LLM : ", toolcalls);
-
-if (toolcalls.length === 0) {  
-    throw new Error('Weather tool call not found in the response');
-}
-
-
-
 for (const toolCall of toolcalls) {
 
-        if (toolCall.name != 'get_weather') {
-        throw new Error('Weather tool call not found in the response');
-        }
-
-        const city = JSON.parse(toolCall.arguments).city;
-        if (toolCall.name !== 'get_weather') {
-        throw new Error('Weather tool call not found in the response');
-        }
-
-        const weatherResult = weatherExecute(city);
-        inputs.push({
-            type: 'function_call_output',   
-            callId: toolCall.callId,
-            output: weatherResult.toString(),
-            
-        });
-}
-
-
-
-console.log("response2 input : ", inputs );
-
-
-const response2 = await client.responses.send({
-  responsesRequest: {
-    model: process.env.OPENROUTER_MODEL,
-    input: inputs,
-    stream: false
+    if (toolCall.name != 'get_weather') {
+    throw new Error('Weather tool call not found in the response');
     }
-  }
-);
 
-console.log("response2 by LLM : ", response2.toString() );
-
-if (response2.status !== 'completed') {
-  throw new Error(response2.error?.message ?? `Response ended as ${response2.status}`);
+    const city = JSON.parse(toolCall.arguments).city;        
+    const weatherResult = weatherExecute(city);
+    inputs.push({
+        type: 'function_call_output',   
+        callId: toolCall.callId,
+        output: weatherResult.toString(),
+        
+    });
 }
-
-const message = response2.output.find((item) => item.type === 'message');
-console.log(message?.content.find((part) => part.type === 'output_text')?.text);
+}
